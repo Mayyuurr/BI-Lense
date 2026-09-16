@@ -1,0 +1,62 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: bilense_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bilense_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bilense_password}
+      POSTGRES_DB: ${POSTGRES_DB:-bilense_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bilense_user} -d ${POSTGRES_DB:-bilense_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend Service
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: bilense_backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bilense_user}:${POSTGRES_PASSWORD:-bilense_password}@db:5432/${POSTGRES_DB:-bilense_db}
+      APP_ENV: development
+      DEBUG: "true"
+      LLAMA_ENABLED: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./models/artifacts:/app/models/artifacts
+
+  # Next.js Frontend Dashboard
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: bilense_frontend
+    restart: always
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api/v1
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:
