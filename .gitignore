@@ -49,6 +49,7 @@ venv.bak/
 # Keep template configuration tracked
 !.env.example
 !backend/.env.example
+BI-Lense_AI_Decision_Intelligence_Project_Complete_Context.md
 
 # ------------------------------------------------------------------------------
 # 4. Large ML Models, Weights & Serialized Artifacts
