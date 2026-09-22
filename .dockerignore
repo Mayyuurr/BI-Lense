@@ -1,0 +1,32 @@
+# Git & system
+.git
+.gitignore
+.github
+
+# Virtual Environments & Python Cache
+.venv
+backend/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.coverage
+**/.mypy_cache
+**/.ruff_cache
+
+# Node modules & Next.js cache
+node_modules
+frontend/node_modules
+frontend/.next
+frontend/out
+
+# IDE & OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Documentation & ML experiments (not needed inside images)
+docs
+ML-experiments
