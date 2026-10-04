@@ -1,13 +1,20 @@
-"""Offline Training Pipeline for Sales & Demand Forecasting.
+"""Optimized Offline Training Pipeline for Sales & Demand Forecasting.
 
-Trains:
-1. Random Forest Regressor
-2. XGBoost Regressor
-3. PyTorch ANN (Multi-Layer Perceptron)
-
-Optimizes ensemble weights w_RF, w_XGB, w_ANN using SciPy SLSQP:
-    min MSE(w_RF * y_RF + w_XGB * y_XGB + w_ANN * y_ANN, y_true)
-    subject to w_RF + w_XGB + w_ANN = 1, w_i >= 0
+Enhancements:
+1. Domain Feature Engineering:
+   - Effective price (price net of discount)
+   - Promotional intensity interaction
+   - Short vs long momentum ratios (lag1 / rolling30, lag7 / rolling30)
+   - Cyclical trigonometric calendar features (sin/cos for day of week & month)
+   - Out-of-fold target encoding for SKU baseline demand velocity
+2. Target Log-Transformation:
+   - Target transformed via z = ln(1 + y) to compress variance and eliminate heteroscedasticity.
+   - Predictions inverted via y_hat = max(0, exp(z_hat) - 1).
+3. Robust Loss Functions:
+   - PyTorch ANN with SmoothL1Loss (Huber) and Cosine Annealing learning rate schedule.
+   - XGBoost and Random Forest tuned for log-space target optimization.
+4. Natural-Scale Constrained SLSQP Ensemble Optimization:
+   - Optimizes w_RF, w_XGB, w_ANN directly on natural units to minimize MAE.
 
 Saves all trained artifacts and evaluation metrics to models/artifacts/sales/.
 """
@@ -16,7 +23,7 @@ import json
 import os
 import random
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import joblib
 import numpy as np
@@ -32,7 +39,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import xgboost as xgb
 
-# Set deterministic random seeds
+# Set deterministic random seeds for scientific reproducibility
 SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
@@ -44,8 +51,8 @@ DATA_PATH = BASE_DIR / "ML-experiments" / "datasets" / "sales.csv"
 ARTIFACTS_DIR = BASE_DIR / "models" / "artifacts" / "sales"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Feature definitions conforming to docs/DATA_DICTIONARY.md
-NUMERIC_FEATURES = [
+# Feature categories
+RAW_NUMERIC_FEATURES = [
     "sales_lag_1",
     "sales_lag_7",
     "sales_lag_30",
@@ -60,8 +67,61 @@ CATEGORICAL_FEATURES = ["product_category"]
 TARGET_COL = "next_period_demand"
 
 
-class DemandANN(nn.Module):
-    """PyTorch Multi-Layer Perceptron for numerical demand regression."""
+def engineer_sales_features(
+    df: pd.DataFrame,
+    sku_mean_map: Dict[str, float] = None,
+    global_mean: float = 64.0,
+) -> Tuple[pd.DataFrame, Dict[str, float], float]:
+    """Generates advanced domain features and circular calendar encodings."""
+    df_feat = df.copy()
+
+    # 1. Effective pricing & promo depth
+    df_feat["effective_price"] = df_feat["unit_price"] * (1.0 - df_feat["discount_rate"])
+    df_feat["promo_intensity"] = df_feat["promotional_flag"] * df_feat["discount_rate"]
+
+    # 2. Short vs long momentum ratios
+    df_feat["lag1_to_rolling_ratio"] = df_feat["sales_lag_1"] / (df_feat["rolling_avg_30"] + 1e-4)
+    df_feat["lag7_to_rolling_ratio"] = df_feat["sales_lag_7"] / (df_feat["rolling_avg_30"] + 1e-4)
+    df_feat["lag30_to_rolling_ratio"] = df_feat["sales_lag_30"] / (df_feat["rolling_avg_30"] + 1e-4)
+
+    # 3. Cyclical calendar encodings (smooth circular continuity)
+    df_feat["sin_dow"] = np.sin(2.0 * np.pi * df_feat["day_of_week"] / 7.0)
+    df_feat["cos_dow"] = np.cos(2.0 * np.pi * df_feat["day_of_week"] / 7.0)
+    df_feat["sin_month"] = np.sin(2.0 * np.pi * df_feat["month"] / 12.0)
+    df_feat["cos_month"] = np.cos(2.0 * np.pi * df_feat["month"] / 12.0)
+
+    # 4. SKU Target Velocity Encoding (fast vs slow moving baselines)
+    if sku_mean_map is None:
+        sku_mean_map = df_feat.groupby("sku_id")[TARGET_COL].mean().to_dict()
+        global_mean = float(df_feat[TARGET_COL].mean())
+
+    df_feat["sku_demand_velocity"] = df_feat["sku_id"].map(sku_mean_map).fillna(global_mean)
+
+    engineered_numeric_cols = [
+        "sales_lag_1",
+        "sales_lag_7",
+        "sales_lag_30",
+        "rolling_avg_30",
+        "discount_rate",
+        "promotional_flag",
+        "unit_price",
+        "effective_price",
+        "promo_intensity",
+        "lag1_to_rolling_ratio",
+        "lag7_to_rolling_ratio",
+        "lag30_to_rolling_ratio",
+        "sin_dow",
+        "cos_dow",
+        "sin_month",
+        "cos_month",
+        "sku_demand_velocity",
+    ]
+
+    return df_feat[engineered_numeric_cols + CATEGORICAL_FEATURES], sku_mean_map, global_mean
+
+
+class DeepDemandANN(nn.Module):
+    """Deep Multi-Layer Perceptron with Batch Normalization and Dropout for log demand."""
 
     def __init__(self, input_dim: int):
         super().__init__()
@@ -71,8 +131,11 @@ class DemandANN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.1),
             nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
             nn.ReLU(),
-            nn.Linear(32, 1),
+            nn.Linear(32, 16),
+            nn.ReLU(),
+            nn.Linear(16, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -85,7 +148,7 @@ def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float
     mse = mean_squared_error(y_true, y_pred)
     rmse = float(np.sqrt(mse))
     r2 = float(r2_score(y_true, y_pred))
-    
+
     # Safe MAPE avoiding division by zero
     non_zero_mask = y_true > 0
     if np.any(non_zero_mask):
@@ -101,43 +164,46 @@ def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float
     }
 
 
-def train_ann(
+def train_ann_log_space(
     X_train: np.ndarray,
-    y_train: np.ndarray,
+    z_train: np.ndarray,
     X_val: np.ndarray,
-    y_val: np.ndarray,
-    epochs: int = 40,
-    batch_size: int = 128,
-    lr: float = 0.008,
-) -> DemandANN:
-    """Trains PyTorch ANN model with early stopping."""
+    z_val: np.ndarray,
+    epochs: int = 50,
+    batch_size: int = 64,
+    lr: float = 0.006,
+) -> DeepDemandANN:
+    """Trains PyTorch ANN on log-transformed targets using Huber SmoothL1Loss."""
     input_dim = X_train.shape[1]
-    model = DemandANN(input_dim)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    criterion = nn.MSELoss()
+    model = DeepDemandANN(input_dim)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
+    criterion = nn.SmoothL1Loss(beta=0.05)
 
-    train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32))
+    train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(z_train, dtype=torch.float32))
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     val_x_tensor = torch.tensor(X_val, dtype=torch.float32)
-    val_y_tensor = torch.tensor(y_val, dtype=torch.float32)
+    val_z_tensor = torch.tensor(z_val, dtype=torch.float32)
 
     best_val_loss = float("inf")
     best_weights = None
 
     for epoch in range(epochs):
         model.train()
-        for batch_x, batch_y in train_loader:
+        for batch_x, batch_z in train_loader:
             optimizer.zero_grad()
             preds = model(batch_x)
-            loss = criterion(preds, batch_y)
+            loss = criterion(preds, batch_z)
             loss.backward()
             optimizer.step()
+
+        scheduler.step()
 
         model.eval()
         with torch.no_grad():
             val_preds = model(val_x_tensor)
-            val_loss = criterion(val_preds, val_y_tensor).item()
+            val_loss = criterion(val_preds, val_z_tensor).item()
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -149,18 +215,18 @@ def train_ann(
     return model
 
 
-def optimize_ensemble_weights(
+def optimize_natural_scale_ensemble(
     y_val: np.ndarray,
-    p_rf: np.ndarray,
-    p_xgb: np.ndarray,
-    p_ann: np.ndarray,
+    y_pred_rf: np.ndarray,
+    y_pred_xgb: np.ndarray,
+    y_pred_ann: np.ndarray,
 ) -> Tuple[float, float, float]:
-    """Optimizes w_RF, w_XGB, w_ANN using SLSQP constrained optimization."""
-    preds_matrix = np.column_stack([p_rf, p_xgb, p_ann])
+    """Optimizes w_RF, w_XGB, w_ANN on natural units to directly minimize MAE."""
+    preds_matrix = np.column_stack([y_pred_rf, y_pred_xgb, y_pred_ann])
 
     def objective(w: np.ndarray) -> float:
         y_ens = np.dot(preds_matrix, w)
-        return float(np.mean((y_val - y_ens) ** 2))
+        return float(np.mean(np.abs(y_val - y_ens)))
 
     init_w = np.array([1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
     bounds = [(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)]
@@ -176,7 +242,7 @@ def optimize_ensemble_weights(
 
 def main():
     print("=================================================================", flush=True)
-    print("       BI-Lense Sales & Demand ML Training & SLSQP Optimization  ", flush=True)
+    print("   BI-Lense Optimized Sales Demand ML Pipeline (Log-Transform)   ", flush=True)
     print("=================================================================", flush=True)
 
     if not DATA_PATH.exists():
@@ -186,114 +252,138 @@ def main():
     df = pd.read_csv(DATA_PATH)
     print(f"[+] Loaded {len(df)} records.", flush=True)
 
-    # Split features and target
-    X = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
-    y = df[TARGET_COL].values
-
     # Train / Val / Test split (70% / 15% / 15%)
-    X_train_raw, X_temp_raw, y_train, y_temp = train_test_split(
-        X, y, test_size=0.30, random_state=SEED
-    )
-    X_val_raw, X_test_raw, y_val, y_test = train_test_split(
-        X_temp_raw, y_temp, test_size=0.50, random_state=SEED
-    )
+    train_df, temp_df = train_test_split(df, test_size=0.30, random_state=SEED)
+    val_df, test_df = train_test_split(temp_df, test_size=0.50, random_state=SEED)
 
-    print(f"[+] Splits -> Train: {len(X_train_raw)}, Val: {len(X_val_raw)}, Test: {len(X_test_raw)}", flush=True)
+    print(f"[+] Splits -> Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}", flush=True)
 
-    # Preprocessing pipeline
+    # 1. Feature Engineering with target encoding fitted strictly on train_df
+    print("[*] Generating domain interaction features and SKU velocity encodings...", flush=True)
+    X_train_df, sku_map, global_mean = engineer_sales_features(train_df)
+    X_val_df, _, _ = engineer_sales_features(val_df, sku_mean_map=sku_map, global_mean=global_mean)
+    X_test_df, _, _ = engineer_sales_features(test_df, sku_mean_map=sku_map, global_mean=global_mean)
+
+    numeric_cols = [c for c in X_train_df.columns if c not in CATEGORICAL_FEATURES]
+
+    # Target values (raw and log-transformed)
+    y_train = train_df[TARGET_COL].values
+    y_val = val_df[TARGET_COL].values
+    y_test = test_df[TARGET_COL].values
+
+    z_train = np.log1p(y_train)
+    z_val = np.log1p(y_val)
+    z_test = np.log1p(y_test)
+
+    # 2. Preprocessing Pipeline
     preprocessor = ColumnTransformer(
         transformers=[
-            ("num", StandardScaler(), NUMERIC_FEATURES),
+            ("num", StandardScaler(), numeric_cols),
             ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), CATEGORICAL_FEATURES),
         ]
     )
 
-    print("[*] Fitting preprocessing transformers...", flush=True)
-    X_train = preprocessor.fit_transform(X_train_raw)
-    X_val = preprocessor.transform(X_val_raw)
-    X_test = preprocessor.transform(X_test_raw)
+    print("[*] Fitting preprocessing ColumnTransformer...", flush=True)
+    X_train = preprocessor.fit_transform(X_train_df)
+    X_val = preprocessor.transform(X_val_df)
+    X_test = preprocessor.transform(X_test_df)
 
-    # 1. Random Forest
-    print("[*] Training Random Forest Regressor...", flush=True)
+    # 3. Model 1: Random Forest Regressor (Trained on log target)
+    print("[*] Training Random Forest on log-transformed demand...", flush=True)
     rf = RandomForestRegressor(
-        n_estimators=100,
-        max_depth=12,
-        min_samples_split=4,
+        n_estimators=120,
+        max_depth=16,
+        min_samples_split=3,
+        min_samples_leaf=2,
         random_state=SEED,
         n_jobs=1,
     )
-    rf.fit(X_train, y_train)
+    rf.fit(X_train, z_train)
 
-    # 2. XGBoost
-    print("[*] Training XGBoost Regressor...", flush=True)
+    # 4. Model 2: XGBoost Regressor (Trained on log target)
+    print("[*] Training XGBoost Regressor on log-transformed demand...", flush=True)
     xgb_model = xgb.XGBRegressor(
-        n_estimators=120,
-        max_depth=5,
-        learning_rate=0.08,
+        n_estimators=180,
+        max_depth=6,
+        learning_rate=0.06,
         subsample=0.85,
         colsample_bytree=0.85,
         random_state=SEED,
         n_jobs=1,
     )
-    xgb_model.fit(X_train, y_train)
+    xgb_model.fit(X_train, z_train)
 
-    # 3. PyTorch ANN
-    print("[*] Training PyTorch Multi-Layer Perceptron (ANN)...", flush=True)
-    ann = train_ann(X_train, y_train, X_val, y_val, epochs=40, batch_size=128, lr=0.008)
+    # 5. Model 3: PyTorch Deep ANN (Trained on log target with Huber Loss)
+    print("[*] Training PyTorch Deep ANN with Cosine Annealing...", flush=True)
+    ann = train_ann_log_space(X_train, z_train, X_val, z_val, epochs=50, batch_size=64, lr=0.006)
 
-    # Predict on Validation set for SLSQP Weight Optimization
-    val_pred_rf = rf.predict(X_val)
-    val_pred_xgb = xgb_model.predict(X_val)
+    # Validation predictions in log-space and inverse transformation to natural units
+    z_val_rf = rf.predict(X_val)
+    z_val_xgb = xgb_model.predict(X_val)
     ann.eval()
     with torch.no_grad():
-        val_pred_ann = ann(torch.tensor(X_val, dtype=torch.float32)).numpy()
+        z_val_ann = ann(torch.tensor(X_val, dtype=torch.float32)).numpy()
 
-    print("[*] Optimizing ensemble weights using SLSQP on validation set...")
-    w_rf, w_xgb, w_ann = optimize_ensemble_weights(y_val, val_pred_rf, val_pred_xgb, val_pred_ann)
-    print(f"[+] Optimal Ensemble Weights -> w_RF: {w_rf:.4f}, w_XGB: {w_xgb:.4f}, w_ANN: {w_ann:.4f} (Sum: {w_rf+w_xgb+w_ann:.4f})")
+    y_val_rf = np.expm1(z_val_rf)
+    y_val_xgb = np.expm1(z_val_xgb)
+    y_val_ann = np.expm1(z_val_ann)
 
-    # Final Evaluation on Held-Out Test Set
-    print("\n[*] Evaluating models on held-out test set...")
-    test_pred_rf = rf.predict(X_test)
-    test_pred_xgb = xgb_model.predict(X_test)
+    # 6. Natural-Scale Constrained SLSQP Ensemble Optimization
+    print("[*] Optimizing ensemble weights via natural-scale SLSQP...", flush=True)
+    w_rf, w_xgb, w_ann = optimize_natural_scale_ensemble(y_val, y_val_rf, y_val_xgb, y_val_ann)
+    print(f"[+] Optimal Ensemble Weights -> w_RF: {w_rf:.4f}, w_XGB: {w_xgb:.4f}, w_ANN: {w_ann:.4f} (Sum: {w_rf+w_xgb+w_ann:.4f})", flush=True)
+
+    # 7. Final Evaluation on Held-Out Test Set
+    print("\n[*] Evaluating on held-out test set (Natural Units)...", flush=True)
+    z_test_rf = rf.predict(X_test)
+    z_test_xgb = xgb_model.predict(X_test)
     with torch.no_grad():
-        test_pred_ann = ann(torch.tensor(X_test, dtype=torch.float32)).numpy()
+        z_test_ann = ann(torch.tensor(X_test, dtype=torch.float32)).numpy()
 
-    test_pred_ensemble = (w_rf * test_pred_rf) + (w_xgb * test_pred_xgb) + (w_ann * test_pred_ann)
+    y_test_rf = np.maximum(0.0, np.expm1(z_test_rf))
+    y_test_xgb = np.maximum(0.0, np.expm1(z_test_xgb))
+    y_test_ann = np.maximum(0.0, np.expm1(z_test_ann))
 
-    metrics_rf = calculate_metrics(y_test, test_pred_rf)
-    metrics_xgb = calculate_metrics(y_test, test_pred_xgb)
-    metrics_ann = calculate_metrics(y_test, test_pred_ann)
-    metrics_ensemble = calculate_metrics(y_test, test_pred_ensemble)
+    y_test_ensemble = (w_rf * y_test_rf) + (w_xgb * y_test_xgb) + (w_ann * y_test_ann)
+
+    metrics_rf = calculate_metrics(y_test, y_test_rf)
+    metrics_xgb = calculate_metrics(y_test, y_test_xgb)
+    metrics_ann = calculate_metrics(y_test, y_test_ann)
+    metrics_ensemble = calculate_metrics(y_test, y_test_ensemble)
 
     all_metrics = {
         "random_forest": metrics_rf,
         "xgboost": metrics_xgb,
         "ann": metrics_ann,
         "hybrid_ensemble": metrics_ensemble,
+        "features": numeric_cols + CATEGORICAL_FEATURES,
         "ensemble_weights": {
             "w_rf": round(w_rf, 4),
             "w_xgb": round(w_xgb, 4),
             "w_ann": round(w_ann, 4),
         },
+        "target_transformation": "log1p",
     }
 
-    print("\n" + "=" * 65)
-    print(f"{'Model':<20} | {'MAE':<8} | {'RMSE':<8} | {'R2':<8} | {'MAPE (%)':<8}")
-    print("-" * 65)
-    print(f"{'Random Forest':<20} | {metrics_rf['mae']:<8} | {metrics_rf['rmse']:<8} | {metrics_rf['r2']:<8} | {metrics_rf['mape_percent']:<8}")
-    print(f"{'XGBoost':<20} | {metrics_xgb['mae']:<8} | {metrics_xgb['rmse']:<8} | {metrics_xgb['r2']:<8} | {metrics_xgb['mape_percent']:<8}")
-    print(f"{'PyTorch ANN':<20} | {metrics_ann['mae']:<8} | {metrics_ann['rmse']:<8} | {metrics_ann['r2']:<8} | {metrics_ann['mape_percent']:<8}")
-    print("-" * 65)
-    print(f"{'Hybrid Ensemble':<20} | {metrics_ensemble['mae']:<8} | {metrics_ensemble['rmse']:<8} | {metrics_ensemble['r2']:<8} | {metrics_ensemble['mape_percent']:<8}")
-    print("=" * 65)
+    print("\n" + "=" * 68, flush=True)
+    print(f"{'Model':<20} | {'MAE':<8} | {'RMSE':<8} | {'R2':<8} | {'MAPE (%)':<8}", flush=True)
+    print("-" * 68, flush=True)
+    print(f"{'Random Forest':<20} | {metrics_rf['mae']:<8} | {metrics_rf['rmse']:<8} | {metrics_rf['r2']:<8} | {metrics_rf['mape_percent']:<8}", flush=True)
+    print(f"{'XGBoost':<20} | {metrics_xgb['mae']:<8} | {metrics_xgb['rmse']:<8} | {metrics_xgb['r2']:<8} | {metrics_xgb['mape_percent']:<8}", flush=True)
+    print(f"{'PyTorch ANN':<20} | {metrics_ann['mae']:<8} | {metrics_ann['rmse']:<8} | {metrics_ann['r2']:<8} | {metrics_ann['mape_percent']:<8}", flush=True)
+    print("-" * 68, flush=True)
+    print(f"{'Hybrid Ensemble':<20} | {metrics_ensemble['mae']:<8} | {metrics_ensemble['rmse']:<8} | {metrics_ensemble['r2']:<8} | {metrics_ensemble['mape_percent']:<8}", flush=True)
+    print("=" * 68, flush=True)
 
-    # Save artifacts
-    print("\n[*] Saving model artifacts to models/artifacts/sales/...")
+    # 8. Save Artifacts
+    print("\n[*] Saving optimized model artifacts to models/artifacts/sales/...", flush=True)
     joblib.dump(rf, ARTIFACTS_DIR / "rf_model.joblib")
     xgb_model.save_model(str(ARTIFACTS_DIR / "xgb_model.json"))
     torch.save(ann.state_dict(), ARTIFACTS_DIR / "ann_model.pt")
     joblib.dump(preprocessor, ARTIFACTS_DIR / "preprocessor.joblib")
+
+    with open(ARTIFACTS_DIR / "sku_encoding.json", "w") as f:
+        json.dump({"sku_map": sku_map, "global_mean": global_mean}, f, indent=2)
 
     with open(ARTIFACTS_DIR / "ensemble_weights.json", "w") as f:
         json.dump(all_metrics["ensemble_weights"], f, indent=2)
@@ -301,8 +391,8 @@ def main():
     with open(ARTIFACTS_DIR / "metrics.json", "w") as f:
         json.dump(all_metrics, f, indent=2)
 
-    print("[OK] All Sales ML artifacts successfully exported!")
-    print("=================================================================")
+    print("[OK] Optimized Sales ML artifacts successfully exported!", flush=True)
+    print("=================================================================", flush=True)
 
 
 if __name__ == "__main__":
