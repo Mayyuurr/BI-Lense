@@ -1,7 +1,6 @@
-"""HR & Productivity ML Predictor.
+"""Finance ML Predictor.
 
-Forecasts projected task delay OR backlog probability using the hybrid ensemble.
-NOTE: The exact HR target metric is pending research finalization.
+Forecasts probability of operating cash-flow deficit in the next 30-day cycle.
 """
 
 from dataclasses import dataclass
@@ -9,21 +8,21 @@ from typing import Dict, Optional
 import pandas as pd
 
 from app.ml.base import BaseMLModel
-from app.ml.ensemble.optimizer import EnsembleWeights, HybridEnsemblePredictor
+from app.ml.ensemble import EnsembleWeights, HybridEnsemblePredictor
 
 
 @dataclass
-class HRPredictionResult:
-    """Encapsulates HR/Productivity prediction outcomes."""
+class CashFlowDeficitResult:
+    """Encapsulates operating cash-flow deficit prediction outcomes."""
 
-    predicted_value: float
-    target_metric: str  # e.g., "task_delay_days" or "backlog_probability"
+    deficit_probability: float
     base_predictions: Dict[str, float]
     ensemble_weights: Dict[str, float]
+    forecast_horizon_days: int = 30
 
 
-class HRPredictor:
-    """Inference orchestrator for HR and team productivity metrics."""
+class FinanceDeficitPredictor:
+    """Inference orchestrator for 30-day operating cash flow risk."""
 
     def __init__(
         self,
@@ -38,12 +37,12 @@ class HRPredictor:
         self.ensemble_weights = ensemble_weights
         self.ensemble_predictor = HybridEnsemblePredictor(weights=ensemble_weights)
 
-    def predict(
+    def predict_deficit_probability(
         self,
         features: pd.DataFrame,
-        target_metric: str = "task_delay_or_backlog",
-    ) -> HRPredictionResult:
-        """Predicts HR productivity risk metric."""
+        forecast_horizon_days: int = 30,
+    ) -> CashFlowDeficitResult:
+        """Estimates probability of cash deficit over next horizon."""
         if not (self.rf_model and self.xgb_model and self.ann_model and self.ensemble_weights):
             raise NotImplementedError(
                 "Trained models and ensemble weights must be loaded from artifacts."
@@ -53,15 +52,16 @@ class HRPredictor:
         pred_xgb = float(self.xgb_model.predict(features)[0])
         pred_ann = float(self.ann_model.predict(features)[0])
 
-        val = self.ensemble_predictor.predict(
+        prob = self.ensemble_predictor.predict(
             pred_rf=pred_rf,
             pred_xgb=pred_xgb,
             pred_ann=pred_ann,
         )
+        bounded_prob = max(0.0, min(1.0, prob))
 
-        return HRPredictionResult(
-            predicted_value=val,
-            target_metric=target_metric,
+        return CashFlowDeficitResult(
+            deficit_probability=bounded_prob,
             base_predictions={"rf": pred_rf, "xgb": pred_xgb, "ann": pred_ann},
             ensemble_weights=self.ensemble_weights.to_dict(),
+            forecast_horizon_days=forecast_horizon_days,
         )

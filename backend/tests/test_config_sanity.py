@@ -3,7 +3,7 @@
 from app.core.config import settings
 from app.data.ingestion.connectors import CSVConnector
 from app.data.preprocessing.cleaner import DeterministicDataCleaner
-from app.ml.ensemble.optimizer import EnsembleOptimizer, EnsembleWeights
+from app.ml.ensemble import EnsembleOptimizer, EnsembleWeights
 from app.scoring.bp_score import BPScoreCalculator
 from app.recommendations.engine import RecommendationEngine
 

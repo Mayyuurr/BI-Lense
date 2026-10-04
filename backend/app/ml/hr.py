@@ -1,6 +1,7 @@
-"""Inventory ML Predictor.
+"""HR & Productivity ML Predictor.
 
-Estimates stockout probability before supplier delivery using the hybrid ensemble.
+Forecasts projected task delay OR backlog probability using the hybrid ensemble.
+NOTE: The exact HR target metric is pending research finalization.
 """
 
 from dataclasses import dataclass
@@ -8,21 +9,21 @@ from typing import Dict, Optional
 import pandas as pd
 
 from app.ml.base import BaseMLModel
-from app.ml.ensemble.optimizer import EnsembleWeights, HybridEnsemblePredictor
+from app.ml.ensemble import EnsembleWeights, HybridEnsemblePredictor
 
 
 @dataclass
-class StockoutPredictionResult:
-    """Encapsulates stockout probability prediction outcomes."""
+class HRPredictionResult:
+    """Encapsulates HR/Productivity prediction outcomes."""
 
-    stockout_probability: float
+    predicted_value: float
+    target_metric: str  # e.g., "task_delay_days" or "backlog_probability"
     base_predictions: Dict[str, float]
     ensemble_weights: Dict[str, float]
-    sku_id: Optional[str] = None
 
 
-class InventoryStockoutPredictor:
-    """Inference orchestrator for stockout risk estimation."""
+class HRPredictor:
+    """Inference orchestrator for HR and team productivity metrics."""
 
     def __init__(
         self,
@@ -37,12 +38,12 @@ class InventoryStockoutPredictor:
         self.ensemble_weights = ensemble_weights
         self.ensemble_predictor = HybridEnsemblePredictor(weights=ensemble_weights)
 
-    def predict_stockout_probability(
+    def predict(
         self,
         features: pd.DataFrame,
-        sku_id: Optional[str] = None,
-    ) -> StockoutPredictionResult:
-        """Estimates stockout probability before supplier delivery."""
+        target_metric: str = "task_delay_or_backlog",
+    ) -> HRPredictionResult:
+        """Predicts HR productivity risk metric."""
         if not (self.rf_model and self.xgb_model and self.ann_model and self.ensemble_weights):
             raise NotImplementedError(
                 "Trained models and ensemble weights must be loaded from artifacts."
@@ -52,17 +53,15 @@ class InventoryStockoutPredictor:
         pred_xgb = float(self.xgb_model.predict(features)[0])
         pred_ann = float(self.ann_model.predict(features)[0])
 
-        prob = self.ensemble_predictor.predict(
+        val = self.ensemble_predictor.predict(
             pred_rf=pred_rf,
             pred_xgb=pred_xgb,
             pred_ann=pred_ann,
         )
-        # Ensure probability bounds [0.0, 1.0]
-        bounded_prob = max(0.0, min(1.0, prob))
 
-        return StockoutPredictionResult(
-            stockout_probability=bounded_prob,
+        return HRPredictionResult(
+            predicted_value=val,
+            target_metric=target_metric,
             base_predictions={"rf": pred_rf, "xgb": pred_xgb, "ann": pred_ann},
             ensemble_weights=self.ensemble_weights.to_dict(),
-            sku_id=sku_id,
         )

@@ -46,7 +46,6 @@ class EnsembleOptimizer:
         y_pred_ann: np.ndarray,
     ) -> EnsembleWeights:
         """Finds optimal weights [w_rf, w_xgb, w_ann] minimizing Mean Squared Error (MSE)
-
         on a validation dataset, subject to sum(w) = 1 and w_i >= 0.
         """
         predictions_matrix = np.column_stack([y_pred_rf, y_pred_xgb, y_pred_ann])
