@@ -29,7 +29,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bilense_user}:${POSTGRES_PASSWORD:-bilense_password}@db:5432/${POSTGRES_DB:-bilense_db}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-bilense_user}:${POSTGRES_PASSWORD:-bilense_password}@db:5432/${POSTGRES_DB:-bilense_db}
       APP_ENV: development
       DEBUG: "true"
       LLAMA_ENABLED: "false"

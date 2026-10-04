@@ -37,10 +37,17 @@ class Settings(BaseSettings):
         return []
 
     # Database Settings
-    DATABASE_URL: str = "postgresql://bilense_user:bilense_password@localhost:5432/bilense_db"
+    DATABASE_URL: str = "postgresql+psycopg2://bilense_user:bilense_password@localhost:5432/bilense_db"
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
     DB_TIMEOUT_SECONDS: int = 5
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def format_database_url(cls, v: str) -> str:
+        if isinstance(v, str) and v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return v
 
     # Local LLaMA Configuration (Copilot & Explanation)
     LLAMA_ENABLED: bool = False
