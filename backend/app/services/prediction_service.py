@@ -1,45 +1,70 @@
-"""Prediction Management Service.
-
-Orchestrates domain ML inference pipelines (Sales, Inventory, Finance, HR)
-and records predictions.
-"""
-
-from typing import Any, Dict, Optional
 import pandas as pd
-from sqlalchemy.orm import Session
 
-from app.ml.ensemble.optimizer import EnsembleWeights
-from app.ml.sales.predictor import SalesDemandPredictor
-from app.ml.inventory.predictor import InventoryStockoutPredictor
-from app.ml.finance.predictor import FinanceDeficitPredictor
-from app.ml.hr.predictor import HRPredictor
-from app.models.database_models import PredictionRecord
-from app.core.logging_config import logger
+from app.ml.customer.predictor import (
+    train_model,
+    predict_customers as model_predict_customer
+)
+from app.core.database import SessionLocal
+from app.models.Predicted_Cutomer_Will_But_Or_Not import Predicte_Customer_Will_Buy_Or_Not
 
 
-class PredictionService:
-    """Service boundary coordinating hybrid ML model execution across domains."""
+def train_customer_model(file):
 
-    def __init__(self, db: Optional[Session] = None) -> None:
-        self.db = db
+    rows = train_model(file)
 
-    def get_domain_prediction(
-        self,
-        domain: str,
-        input_data: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Placeholder service endpoint for running domain hybrid ML predictions.
+    return {
+        "message": "Customer model trained successfully",
+        "rows_used": rows
+    }
 
-        Actual prediction execution requires trained model artifacts from ML experiments.
-        """
-        valid_domains = ["sales", "inventory", "finance", "hr"]
-        if domain.lower() not in valid_domains:
-            raise ValueError(f"Invalid domain '{domain}'. Must be one of {valid_domains}")
 
-        # Returns service contract without inventing fake predictions
+def predict_customer():
+
+    db = SessionLocal()
+
+    try:
+
+        customers = db.query(
+            Predicte_Customer_Will_Buy_Or_Not
+        ).filter(
+            Predicte_Customer_Will_Buy_Or_Not.prediction.is_(None)
+        ).all()
+
+        if not customers:
+            return {
+                "message": "No customers available for prediction",
+                "rows_predicted": 0
+            }
+
+        # Convert database rows to DataFrame
+        data = pd.DataFrame([
+            {
+                "previous_purchases": customer.previous_purchases,
+                "previous_visits": customer.previous_visits,
+                "avg_time": customer.avg_time,
+                "avg_pages": customer.avg_pages
+            }
+            for customer in customers
+        ])
+
+        # Send DataFrame to ML model
+        predictions, probabilities = model_predict_customer(data)
+
+        # Update database
+        for customer, prediction, probability in zip(
+            customers,
+            predictions,
+            probabilities
+        ):
+            customer.prediction = int(prediction)
+            customer.probability = float(probability)
+
+        db.commit()
+
         return {
-            "domain": domain.lower(),
-            "status": "ready_for_model_artifacts",
-            "message": f"ML prediction pipeline for {domain} configured. Awaiting model artifact loading.",
-            "features_received": list(input_data.keys()),
+            "message": "Prediction completed successfully",
+            "rows_predicted": len(customers)
         }
+
+    finally:
+        db.close()

@@ -11,7 +11,7 @@ from app.scoring.inventory_score import InventoryScoreCalculator
 from app.scoring.finance_score import FinanceScoreCalculator
 from app.scoring.employee_score import EmployeeScoreCalculator
 from app.scoring.bp_score import BPScoreCalculator, BusinessPerformanceResult
-from app.models.database_models import BusinessScoreRecord
+from backend.app.models.Predicted_Cutomer_Will_But_Or_Not import BusinessScoreRecord
 from app.core.logging_config import logger
 
 

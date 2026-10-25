@@ -13,7 +13,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 from app.core.config import settings
 from app.core.database import Base
-from app.models.database_models import (
+from backend.app.models.Predicted_Cutomer_Will_But_Or_Not import (
     DatasetMetadata,
     PredictionRecord,
     BusinessScoreRecord,

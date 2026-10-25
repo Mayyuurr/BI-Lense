@@ -10,7 +10,7 @@ from app.explainability.shap_engine import ModelAgnosticSHAPEngine
 from app.llm.llama_client import LocalLLaMAClient
 from app.llm.explanation import ExplanationSynthesizer, BusinessNarrative
 from app.recommendations.engine import RecommendationEngine, ActionableRecommendation
-from app.models.database_models import ExplanationLog
+from backend.app.models.Predicted_Cutomer_Will_But_Or_Not import ExplanationLog
 from app.core.logging_config import logger
 
 
