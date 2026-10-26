@@ -33,10 +33,12 @@ class PredictionRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     domain = Column(String(50), nullable=False, index=True)
+    sku_id = Column(String(100), nullable=True, index=True)
     target_metric = Column(String(100), nullable=False)
     predicted_value = Column(Float, nullable=False)
     model_weights = Column(JSON, nullable=True)  # {w_RF, w_XGB, w_ANN}
     raw_predictions = Column(JSON, nullable=True)  # {RF, XGB, ANN}
+    prediction_metadata = Column(JSON, nullable=True)  # Full response payload
     prediction_timestamp = Column(DateTime, default=datetime.utcnow)
 
 

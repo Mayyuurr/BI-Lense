@@ -4,7 +4,7 @@ Provides SQLAlchemy engine, session factories, and dependency injection
 helpers for FastAPI request lifecycles with graceful fallback.
 """
 
-from typing import Generator
+from typing import Generator, Optional
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -49,16 +49,33 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def check_db_connection() -> bool:
+_db_online_status: Optional[bool] = None
+
+
+def check_db_connection(force_recheck: bool = False) -> bool:
     """Checks whether the PostgreSQL database is reachable.
 
     Returns:
         bool: True if connection succeeded, False otherwise.
     """
+    global _db_online_status
+    if _db_online_status is not None and not force_recheck:
+        return _db_online_status
+
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+        _db_online_status = True
         return True
     except Exception as exc:
-        logger.warning(f"Database connectivity check failed: {exc}")
+        _db_online_status = False
+        logger.info(f"Database currently offline/unreachable: {exc}. Running in fault-tolerant mode.")
         return False
+
+
+def is_database_online() -> bool:
+    """Returns whether database is currently reachable without re-triggering slow timeouts."""
+    global _db_online_status
+    if _db_online_status is None:
+        return check_db_connection()
+    return _db_online_status

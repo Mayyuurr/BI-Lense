@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from app.core.database import is_database_online
 from app.core.logging_config import logger
 from app.explainability.shap_engine import EnsembleSHAPExplainer
 from app.ml.inventory import InventoryStockoutPredictor
@@ -79,19 +80,24 @@ class PredictionService:
             explanation = self.sales_explainer.explain(df)
             output["explanation"] = explanation.to_dict()
 
-        # Persist audit record if db session is available
-        if self.db is not None:
+        # Persist audit record if db session is available and database is reachable
+        if self.db is not None and is_database_online():
             try:
                 record = PredictionRecord(
                     domain="sales",
                     sku_id=result.sku_id,
-                    prediction_value=result.predicted_demand,
+                    target_metric="demand_units",
+                    predicted_value=result.predicted_demand,
+                    model_weights=result.ensemble_weights,
+                    raw_predictions=result.base_predictions,
                     prediction_metadata=output,
                 )
                 self.db.add(record)
                 self.db.commit()
             except Exception as e:
-                logger.warning(f"Could not persist prediction audit record: {e}")
+                logger.debug(f"Could not persist prediction audit record: {e}")
+                if self.db:
+                    self.db.rollback()
 
         return output
 
@@ -122,19 +128,24 @@ class PredictionService:
             explanation = self.inventory_explainer.explain(df)
             output["explanation"] = explanation.to_dict()
 
-        # Persist audit record if db session is available
-        if self.db is not None:
+        # Persist audit record if db session is available and database is reachable
+        if self.db is not None and is_database_online():
             try:
                 record = PredictionRecord(
                     domain="inventory",
                     sku_id=result.sku_id,
-                    prediction_value=result.stockout_probability,
+                    target_metric="stockout_probability",
+                    predicted_value=result.stockout_probability,
+                    model_weights=result.ensemble_weights,
+                    raw_predictions=result.base_predictions,
                     prediction_metadata=output,
                 )
                 self.db.add(record)
                 self.db.commit()
             except Exception as e:
-                logger.warning(f"Could not persist prediction audit record: {e}")
+                logger.debug(f"Could not persist prediction audit record: {e}")
+                if self.db:
+                    self.db.rollback()
 
         return output
 

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
+from app.core.database import is_database_online
 from app.core.logging_config import logger
 from app.models.database_models import BusinessScoreRecord
 from app.scoring.bp_score import (
@@ -73,8 +74,8 @@ class ScoringService:
                 breakdowns["employee"] = emp_res.metrics_breakdown
             bp_result.metadata["domain_breakdowns"] = breakdowns
 
-        # Persist record in database
-        if self.db is not None:
+        # Persist record in database if database is online
+        if self.db is not None and is_database_online():
             try:
                 record = BusinessScoreRecord(
                     sales_score=s_score,
@@ -90,7 +91,7 @@ class ScoringService:
                 if bp_result.metadata:
                     bp_result.metadata["record_id"] = record.id
             except Exception as exc:
-                logger.warning(f"Failed to persist business score record: {exc}")
+                logger.debug(f"Failed to persist business score record: {exc}")
                 if self.db:
                     self.db.rollback()
 
@@ -129,7 +130,7 @@ class ScoringService:
 
     def get_latest_score(self) -> Optional[Dict[str, Any]]:
         """Retrieves the most recently calculated business score record from the database."""
-        if not self.db:
+        if not self.db or not is_database_online():
             return None
         try:
             record = (
@@ -150,12 +151,12 @@ class ScoringService:
                 "calculated_at": record.calculated_at.isoformat() if record.calculated_at else None,
             }
         except Exception as exc:
-            logger.warning(f"Database query failed for latest score: {exc}")
+            logger.debug(f"Database query failed for latest score: {exc}")
             return None
 
     def get_score_history(self, limit: int = 30) -> List[Dict[str, Any]]:
         """Retrieves chronological score history for time-series trend analysis."""
-        if not self.db:
+        if not self.db or not is_database_online():
             return []
         try:
             records = (
@@ -177,5 +178,5 @@ class ScoringService:
                 for r in reversed(records)
             ]
         except Exception as exc:
-            logger.warning(f"Database query failed for score history: {exc}")
+            logger.debug(f"Database query failed for score history: {exc}")
             return []

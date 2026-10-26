@@ -7,6 +7,7 @@ rule-based fallbacks, and audit logging.
 from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
+from app.core.database import is_database_online
 from app.core.logging_config import logger
 from app.llm.explanation import BusinessNarrative, ExplanationSynthesizer
 from app.llm.llama_client import LocalLLaMAClient
@@ -53,7 +54,7 @@ class ExplanationService:
         )
 
         # Audit log in database if DB is reachable
-        if self.db is not None:
+        if self.db is not None and is_database_online():
             try:
                 log_entry = ExplanationLog(
                     domain=domain,
@@ -67,7 +68,7 @@ class ExplanationService:
                 self.db.add(log_entry)
                 self.db.commit()
             except Exception as exc:
-                logger.warning(f"Failed to log explanation in database: {exc}")
+                logger.debug(f"Failed to log explanation in database: {exc}")
                 if self.db:
                     self.db.rollback()
 
