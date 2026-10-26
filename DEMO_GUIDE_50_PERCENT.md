@@ -68,18 +68,19 @@ Open **`http://localhost:8000/docs`** in your browser.
 #### Output to Highlight on Screen:
 Show the response JSON sections:
 1. **`business_health`**:
-   - `bp_score`: e.g. **78.4**
+   - `bp_score`: **82.33**
    - `alert_tier`: **STABLE** (Blue operating band)
-   - `primary_bottleneck`: **inventory**
-   - `domain_scores`: Sales (84.5), Inventory (68.2), Finance (81.0), Employee (80.0)
+   - `primary_bottleneck`: **employee** (lowest scoring domain: 67.20)
+   - `domain_scores`: Sales (**91.92**), Inventory (**90.20**), Finance (**80.00**), Employee (**67.20**)
 2. **`sales_forecast`**:
-   - `predicted_demand`: **138.45 units**
-   - `model_weights`: $w_{\text{RF}}=0.1812, w_{\text{XGB}}=0.3143, w_{\text{ANN}}=0.5046$
-   - `top_positive_driver`: *"30-Day Moving Average Demand (+24.20)"*
-   - `top_negative_driver`: *"Net Customer Price (-12.80)"*
+   - `predicted_demand`: **59.74 units** (baseline: ~55.57 units)
+   - `ensemble_weights`: $w_{\text{RF}}=0.1812, w_{\text{XGB}}=0.3143, w_{\text{ANN}}=0.5046$
+   - `top_positive_driver`: *"30-Day Moving Average Demand (+6.88)"*
+   - `top_negative_driver`: *"Active Discount / Promotional Event (-2.89)"*
 3. **`inventory_risk`**:
-   - `stockout_probability`: **0.22 (22%)**
-   - `restock_triggered`: **false**
+   - `stockout_probability`: **0.999 (99.9% - CRITICAL RISK)**
+   - `restock_triggered`: **true** ($s \le R$)
+   - `suggested_order_quantity`: **115.0 units**
 4. **`executive_narrative`**:
    - Structured plain-language briefing with `headline`, `summary`, `key_drivers`, and `suggested_actions`.
    - `source`: `"llm_generated"` (if remote LLaMA connected) or `"deterministic_fallback"` (if offline).
@@ -96,7 +97,7 @@ Show the response JSON sections:
 #### Action:
 1. In Swagger UI, expand **`POST /api/v1/predictions/sales`**.
 2. Click **"Try it out"**.
-3. In the JSON body, set:
+3. In the JSON body, you can either keep the prefilled payload or use:
    ```json
    {
      "sku_id": "SKU-001",
@@ -116,13 +117,18 @@ Show the response JSON sections:
 4. Click **"Execute"**.
 
 #### Output to Highlight on Screen:
-Show the returned `"explanation"` object:
-- `attributions`: Array of features with human-readable labels, raw feature values, SHAP values, and relative percentage impact.
-- `top_positive_drivers`: Features driving demand upward.
-- `top_negative_drivers`: Features pulling demand downward.
+Show the returned prediction and `"explanation"` object:
+- `predicted_demand`: **59.74 units** (from Base Value of **55.57 units**)
+- `ensemble_weights`: `RF: 0.1812, XGB: 0.3143, ANN: 0.5046`
+- `explanation.attributions`: Array of 10 features with human-readable labels, raw feature values, SHAP values, and relative percentage impact.
+- `explanation.top_positive_drivers`:
+  - `rolling_avg_30` (+6.88 impact) — *"30-Day Moving Average Demand"*
+- `explanation.top_negative_drivers`:
+  - `promotional_flag` (-2.89 impact)
+  - `discount_rate` (-0.01 impact)
 
 #### What to Say to Evaluators:
-> *"SME owners will not trust a number if they don't understand why the model predicted it. Here, we implemented Option A: Exact Linear Ensemble SHAP. By the Lundberg & Lee Additivity Axiom, the SHAP value of an ensemble equals the weighted sum of the SHAP values of its constituent models ($\phi_j = \sum w_i \phi_j^{(i)}$). We also map cryptic feature names like `lag1_to_rolling_ratio` into executive-friendly labels like 'Short-Term Sales Surge vs 30D Average'."*
+> *"SME owners will not trust a number if they don't understand why the model predicted it. Here, we implemented Option A: Exact Linear Ensemble SHAP. By the Lundberg & Lee Additivity Axiom, the SHAP value of an ensemble equals the weighted sum of the SHAP values of its constituent models ($\phi_j = \sum w_i \phi_j^{(i)}$). Notice the base demand expectation is 55.57 units; the positive 30-day moving average pushes demand up by +6.88 units to yield our final prediction of 59.74 units. We also map cryptic feature names into executive-friendly labels."*
 
 ---
 
