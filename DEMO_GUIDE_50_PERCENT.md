@@ -9,13 +9,24 @@
 
 ## 📋 Pre-Demo Preparation Checklist (Do this 5 minutes before)
 
-- [ ] Open PowerShell / Terminal in `e:\BI-Lense\backend`.
-- [ ] Verify Python 3.12 virtual environment is active (`.venv\Scripts\activate`).
-- [ ] Open Chrome / Browser ready at `http://localhost:8000/docs`.
-- [ ] *(Optional)* If PostgreSQL is running, seed demo data:
+You can run the demo either with **Docker (Recommended)** or via **Local Virtual Environment**.
+
+### Option A: Running with Docker (Recommended for presentation)
+- [ ] Open PowerShell in the root directory (`e:\BI-Lense`).
+- [ ] Verify Docker Desktop is running.
+- [ ] Spin up PostgreSQL and the Backend:
   ```powershell
-  .venv\Scripts\python scripts/seed_demo_data.py
+  docker compose up -d --build db backend
   ```
+- [ ] Seed historical demo data into PostgreSQL:
+  ```powershell
+  docker compose exec backend python scripts/seed_demo_data.py
+  ```
+
+### Option B: Running Locally (Fastest, zero Docker overhead)
+- [ ] Open PowerShell in `e:\BI-Lense\backend`.
+- [ ] Activate virtual environment: `.venv\Scripts\activate`.
+- [ ] *(Optional)* Seed demo data: `.venv\Scripts\python scripts/seed_demo_data.py`.
 
 ---
 
@@ -32,28 +43,31 @@
 ---
 
 ### STAGE 1: Code Quality & Mathematical Correctness Proof
-**Goal:** Prove to evaluators right away that the system is fully functional, stable, and backed by robust engineering (not just mock code).
+**Goal:** Prove to evaluators right away that the system is fully functional, stable, and verified.
 
 #### Action:
-In your terminal, run:
-```powershell
-cd e:\BI-Lense\backend
-.venv\Scripts\pytest -v
-```
+- **If using Docker:**
+  ```powershell
+  docker compose exec backend pytest -v
+  ```
+- **If running locally:**
+  ```powershell
+  cd e:\BI-Lense\backend
+  .venv\Scripts\pytest -v
+  ```
 
 #### What to Say to Evaluators:
-> *"Before we test live endpoints, we want to show the test coverage and regression safety of our platform. We have built 32 automated unit and integration tests covering data validation, hybrid ensemble inference, exact linear SHAP attributions, dynamic business performance scoring, and LLaMA narrative generation. All 32 tests execute in under 25 seconds with a 100% pass rate."*
+> *"Before we test live endpoints, we want to show the test coverage and regression safety of our platform. We have built 32 automated unit and integration tests covering data validation, hybrid ensemble inference, exact linear SHAP attributions, dynamic business performance scoring, and LLaMA narrative generation. As you can see, all 32 tests execute cleanly inside our containerized environment in under 25 seconds."*
 
 ---
 
-### STAGE 2: Start Backend Server & Open Interactive UI
-**Goal:** Launch the FastAPI application.
+### STAGE 2: Access the Interactive Swagger UI
+**Goal:** Open the running backend API documentation.
 
 #### Action:
-Run the server:
-```powershell
-.venv\Scripts\uvicorn app.main:app --reload --port 8000
-```
+- If running Docker: the backend is already running on `http://localhost:8000`.
+- If running locally: start with `.venv\Scripts\uvicorn app.main:app --reload --port 8000`.
+
 Open **`http://localhost:8000/docs`** in your browser.
 
 #### What to Say to Evaluators:
