@@ -1,32 +1,17 @@
 # BI-Lense: 50% Implementation Live Demonstration Guide
-## Step-by-Step Presenter Script & Evaluation Walkthrough
+## Step-by-Step Presenter Script & Evaluation Walkthrough (Terminal Track)
 
 **Platform:** `BI-Lense` (AI-Driven Decision Intelligence & Decision Support Platform for SMEs)  
 **Milestone:** 50% Backend Implementation Review  
-**Presenter Goal:** Confidently demonstrate end-to-end intelligence (Data Ingestion $\rightarrow$ Hybrid Ensembles $\rightarrow$ Exact Linear SHAP $\rightarrow$ Dynamic $B_p$ Scoring $\rightarrow$ LLaMA Narrative Synthesis) using terminal and FastAPI Swagger UI.
+**Presenter Goal:** Confidently demonstrate the entire end-to-end intelligence pipeline using just the **Terminal** and **FastAPI Interactive Swagger UI**.
 
 ---
 
-## 📋 Pre-Demo Preparation Checklist (Do this 5 minutes before)
+## 📋 Pre-Demo Preparation Checklist (Do this 2 minutes before)
 
-You can run the demo either with **Docker (Recommended)** or via **Local Virtual Environment**.
-
-### Option A: Running with Docker (Recommended for presentation)
-- [ ] Open PowerShell in the root directory (`e:\BI-Lense`).
-- [ ] Verify Docker Desktop is running.
-- [ ] Spin up PostgreSQL and the Backend:
-  ```powershell
-  docker compose up -d --build db backend
-  ```
-- [ ] Seed historical demo data into PostgreSQL:
-  ```powershell
-  docker compose exec backend python scripts/seed_demo_data.py
-  ```
-
-### Option B: Running Locally (Fastest, zero Docker overhead)
-- [ ] Open PowerShell in `e:\BI-Lense\backend`.
-- [ ] Activate virtual environment: `.venv\Scripts\activate`.
-- [ ] *(Optional)* Seed demo data: `.venv\Scripts\python scripts/seed_demo_data.py`.
+- [ ] Open PowerShell / Terminal in `e:\BI-Lense\backend`.
+- [ ] Ensure the virtual environment is ready.
+- [ ] Have your browser open at `http://localhost:8000/docs`.
 
 ---
 
@@ -43,31 +28,27 @@ You can run the demo either with **Docker (Recommended)** or via **Local Virtual
 ---
 
 ### STAGE 1: Code Quality & Mathematical Correctness Proof
-**Goal:** Prove to evaluators right away that the system is fully functional, stable, and verified.
+**Goal:** Prove to evaluators right away that the system is fully functional, stable, and backed by robust engineering (not mock code).
 
 #### Action:
-- **If using Docker:**
-  ```powershell
-  docker compose exec backend pytest -v
-  ```
-- **If running locally:**
-  ```powershell
-  cd e:\BI-Lense\backend
-  .venv\Scripts\pytest -v
-  ```
+In your terminal (`e:\BI-Lense\backend`), run:
+```powershell
+.venv\Scripts\pytest -v
+```
 
 #### What to Say to Evaluators:
-> *"Before we test live endpoints, we want to show the test coverage and regression safety of our platform. We have built 32 automated unit and integration tests covering data validation, hybrid ensemble inference, exact linear SHAP attributions, dynamic business performance scoring, and LLaMA narrative generation. As you can see, all 32 tests execute cleanly inside our containerized environment in under 25 seconds."*
+> *"Before we test live endpoints, we want to show the test coverage and regression safety of our platform. We have built 32 automated unit and integration tests covering data validation, hybrid ensemble inference, exact linear SHAP attributions, dynamic business performance scoring, and LLaMA narrative generation. All 32 tests execute in under 25 seconds with a 100% pass rate."*
 
 ---
 
-### STAGE 2: Access the Interactive Swagger UI
-**Goal:** Open the running backend API documentation.
+### STAGE 2: Start Backend Server & Open Interactive UI
+**Goal:** Launch the FastAPI application directly from the terminal.
 
 #### Action:
-- If running Docker: the backend is already running on `http://localhost:8000`.
-- If running locally: start with `.venv\Scripts\uvicorn app.main:app --reload --port 8000`.
-
+Run the server:
+```powershell
+.venv\Scripts\uvicorn app.main:app --reload --port 8000
+```
 Open **`http://localhost:8000/docs`** in your browser.
 
 #### What to Say to Evaluators:
@@ -82,8 +63,7 @@ Open **`http://localhost:8000/docs`** in your browser.
 #### Action:
 1. In Swagger UI, expand **`POST /api/v1/insights/dashboard-summary`**.
 2. Click **"Try it out"**.
-3. Leave the Request body as `{}` (it uses built-in realistic SME defaults) or paste custom features.
-4. Click **"Execute"**.
+3. Leave the Request body as `{}` (it uses built-in realistic SME defaults) and click **"Execute"**.
 
 #### Output to Highlight on Screen:
 Show the response JSON sections:
