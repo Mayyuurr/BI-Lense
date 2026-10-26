@@ -2,11 +2,14 @@
 
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.recommendations.engine import RecommendationEngine, ActionableRecommendation, RestockTrigger
+from app.services.explanation_service import ExplanationService
+from app.services.prediction_service import PredictionService
+from app.services.scoring_service import ScoringService
 
 router = APIRouter(prefix="/insights", tags=["Decision Insights & Alerts"])
 
@@ -39,6 +42,27 @@ class RecommendationsRequest(BaseModel):
 
     scores: Dict[str, Optional[float]]
     predictions: Dict[str, Optional[float]] = {}
+
+
+class DashboardSummaryRequest(BaseModel):
+    """Optional payload for tailoring full executive dashboard summary."""
+
+    sales_input: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Features for sales demand forecast. Defaults to standard SKU-001 values if omitted.",
+    )
+    inventory_input: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Features for inventory stockout risk. Defaults to standard SKU-001 values if omitted.",
+    )
+    finance_data: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Indicators for finance health. Defaults to benchmark values if omitted.",
+    )
+    hr_data: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Indicators for employee performance. Defaults to benchmark values if omitted.",
+    )
 
 
 @router.post("/procurement/restock-check", response_model=RestockCheckResponse, status_code=status.HTTP_200_OK)
@@ -89,3 +113,157 @@ def get_recommendations(
         }
         for r in recs
     ]
+
+
+@router.post("/dashboard-summary", status_code=status.HTTP_200_OK)
+async def get_dashboard_summary(
+    payload: Optional[DashboardSummaryRequest] = None,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Unified 'one-shot' endpoint demonstrating full backend intelligence in a single call.
+
+    Combines:
+    1. Hybrid ML Sales Forecast + Exact Linear SHAP Driver decomposition.
+    2. Hybrid ML Inventory Stockout Risk + Procurement Restock Trigger evaluation.
+    3. Composite Business Performance Score (Bp) with alert tier & bottleneck attribution.
+    4. Executive LLaMA / Deterministic Natural-Language Business Narrative.
+    5. Prioritized operational recommendations.
+    """
+    try:
+        pred_service = PredictionService(db=db)
+        score_service = ScoringService(db=db)
+        expl_service = ExplanationService(db=db)
+        rec_engine = RecommendationEngine()
+
+        # 1. Prepare inputs with realistic SME defaults
+        sales_data = (payload and payload.sales_input) or {
+            "sku_id": "SKU-001",
+            "unit_price": 120.0,
+            "sales_lag_1": 65.0,
+            "sales_lag_7": 60.0,
+            "sales_lag_30": 58.0,
+            "rolling_avg_30": 62.0,
+            "discount_rate": 0.08,
+            "promotional_flag": 1,
+            "day_of_week": 2,
+            "month": 6,
+            "product_category": "Hardware",
+        }
+
+        inv_data = (payload and payload.inventory_input) or {
+            "sku_id": "SKU-001",
+            "current_stock": 45.0,
+            "reorder_level": 80.0,
+            "safety_stock": 25.0,
+            "lead_time_days": 7.0,
+            "historical_delivery_delay_days": 1.5,
+            "inventory_turnover_ratio": 7.8,
+            "predicted_sales_demand": 70.0,
+        }
+
+        fin_data = (payload and payload.finance_data) or {
+            "gross_margin_pct": 34.0,
+            "quick_ratio": 1.6,
+            "expense_to_revenue_ratio": 0.68,
+        }
+
+        hr_data = (payload and payload.hr_data) or {
+            "productivity_score": 88.0,
+            "retention_rate": 93.0,
+            "attendance_rate": 95.0,
+        }
+
+        # 2. Run Hybrid ML Predictions with SHAP
+        sales_pred = pred_service.predict_sales_demand(sales_data, include_explanation=True)
+        inv_pred = pred_service.predict_inventory_stockout(inv_data, include_explanation=True)
+
+        # 3. Evaluate Procurement Restock Trigger
+        restock_res = rec_engine.evaluate_procurement_restock(
+            sku_id=inv_data.get("sku_id", "SKU-001"),
+            product_name="Primary Catalog SKU",
+            current_stock=float(inv_data.get("current_stock", 45.0)),
+            reorder_point=float(inv_data.get("reorder_level", 80.0)),
+            safety_stock=float(inv_data.get("safety_stock", 25.0)),
+            lead_time_days=int(inv_data.get("lead_time_days", 7)),
+            daily_demand=float(sales_pred.get("predicted_demand", 65.0)) / 30.0,
+        )
+
+        # 4. Compute Composite Bp Business Score
+        bp_result = score_service.compute_scores(
+            sales_data={"actual_sales": sales_pred.get("predicted_demand", 100.0)},
+            inventory_data={"stockout_probability": inv_pred.get("stockout_probability", 0.20)},
+            finance_data=fin_data,
+            hr_data=hr_data,
+        )
+
+        # 5. Generate Executive Narrative
+        sales_expl = sales_pred.get("explanation", {})
+        top_pos = sales_expl.get("top_positive_drivers", [])
+        top_neg = sales_expl.get("top_negative_drivers", [])
+
+        narrative = await expl_service.generate_explanation(
+            domain="sales",
+            predicted_value=float(sales_pred.get("predicted_demand", 0.0)),
+            target_metric="next_period_demand",
+            top_positive_drivers=top_pos,
+            top_negative_drivers=top_neg,
+            business_score=bp_result.bp_score,
+            alert_tier=bp_result.alert_tier,
+            primary_bottleneck=bp_result.metadata.get("primary_bottleneck"),
+        )
+
+        # 6. Prioritized Recommendations
+        recs = rec_engine.generate_recommendations(
+            scores={
+                "sales": bp_result.sales_score,
+                "inventory": bp_result.inventory_score,
+                "finance": bp_result.finance_score,
+                "employee": bp_result.employee_score,
+            },
+            predictions={
+                "sales_demand": sales_pred.get("predicted_demand"),
+                "stockout_probability": inv_pred.get("stockout_probability"),
+            },
+        )
+
+        return {
+            "status": "success",
+            "business_health": {
+                "bp_score": bp_result.bp_score,
+                "alert_tier": bp_result.alert_tier,
+                "primary_bottleneck": bp_result.metadata.get("primary_bottleneck"),
+                "key_strength": bp_result.metadata.get("key_strength"),
+                "domain_scores": {
+                    "sales": bp_result.sales_score,
+                    "inventory": bp_result.inventory_score,
+                    "finance": bp_result.finance_score,
+                    "employee": bp_result.employee_score,
+                },
+            },
+            "sales_forecast": {
+                "sku_id": sales_pred.get("sku_id"),
+                "predicted_demand": sales_pred.get("predicted_demand"),
+                "model_weights": sales_pred.get("model_weights"),
+                "top_positive_driver": top_pos[0] if top_pos else None,
+                "top_negative_driver": top_neg[0] if top_neg else None,
+            },
+            "inventory_risk": {
+                "sku_id": inv_pred.get("sku_id"),
+                "stockout_probability": inv_pred.get("stockout_probability"),
+                "risk_level": inv_pred.get("risk_level"),
+                "restock_triggered": restock_res.is_triggered,
+                "suggested_order_quantity": restock_res.suggested_order_quantity,
+            },
+            "executive_narrative": narrative.to_dict(),
+            "recommendations": [
+                {
+                    "domain": r.domain,
+                    "title": r.title,
+                    "urgency": r.urgency.value,
+                    "suggested_action": r.suggested_action,
+                }
+                for r in recs
+            ],
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
