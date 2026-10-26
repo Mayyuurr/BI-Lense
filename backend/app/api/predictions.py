@@ -34,7 +34,7 @@ class SalesPredictionInput(BaseModel):
     day_of_week: int = Field(2, json_schema_extra={"example": 2})
     month: int = Field(6, json_schema_extra={"example": 6})
     product_category: str = Field("Hardware", json_schema_extra={"example": "Hardware"})
-    include_explanation: bool = Field(False, json_schema_extra={"example": True})
+    include_explanation: bool = Field(True, json_schema_extra={"example": True})
 
 
 class InventoryPredictionInput(BaseModel):
@@ -48,7 +48,7 @@ class InventoryPredictionInput(BaseModel):
     historical_delivery_delay_days: float = Field(..., json_schema_extra={"example": 1.5})
     inventory_turnover_ratio: float = Field(..., json_schema_extra={"example": 8.2})
     predicted_sales_demand: float = Field(..., json_schema_extra={"example": 70.0})
-    include_explanation: bool = Field(False, json_schema_extra={"example": True})
+    include_explanation: bool = Field(True, json_schema_extra={"example": True})
 
 
 class PredictionExplainRequest(BaseModel):

@@ -49,19 +49,60 @@ class DashboardSummaryRequest(BaseModel):
 
     sales_input: Optional[Dict[str, Any]] = Field(
         None,
-        description="Features for sales demand forecast. Defaults to standard SKU-001 values if omitted.",
+        description="Features for sales demand forecast.",
+        json_schema_extra={
+            "example": {
+                "sku_id": "SKU-001",
+                "unit_price": 120.0,
+                "sales_lag_1": 65.0,
+                "sales_lag_7": 60.0,
+                "sales_lag_30": 58.0,
+                "rolling_avg_30": 62.0,
+                "discount_rate": 0.08,
+                "promotional_flag": 1,
+                "day_of_week": 2,
+                "month": 6,
+                "product_category": "Hardware",
+            }
+        },
     )
     inventory_input: Optional[Dict[str, Any]] = Field(
         None,
-        description="Features for inventory stockout risk. Defaults to standard SKU-001 values if omitted.",
+        description="Features for inventory stockout risk.",
+        json_schema_extra={
+            "example": {
+                "sku_id": "SKU-001",
+                "current_stock": 45.0,
+                "reorder_level": 80.0,
+                "safety_stock": 25.0,
+                "lead_time_days": 7.0,
+                "historical_delivery_delay_days": 1.5,
+                "inventory_turnover_ratio": 7.8,
+                "predicted_sales_demand": 70.0,
+            }
+        },
     )
     finance_data: Optional[Dict[str, Any]] = Field(
         None,
-        description="Indicators for finance health. Defaults to benchmark values if omitted.",
+        description="Indicators for finance health.",
+        json_schema_extra={
+            "example": {
+                "gross_margin_pct": 34.0,
+                "quick_ratio": 1.6,
+                "expense_to_revenue_ratio": 0.68,
+            }
+        },
     )
     hr_data: Optional[Dict[str, Any]] = Field(
         None,
-        description="Indicators for employee performance. Defaults to benchmark values if omitted.",
+        description="Indicators for employee performance.",
+        json_schema_extra={
+            "example": {
+                "productivity_score": 88.0,
+                "retention_rate": 93.0,
+                "attendance_rate": 95.0,
+            }
+        },
     )
 
 
@@ -135,8 +176,8 @@ async def get_dashboard_summary(
         expl_service = ExplanationService(db=db)
         rec_engine = RecommendationEngine()
 
-        # 1. Prepare inputs with realistic SME defaults
-        sales_data = (payload and payload.sales_input) or {
+        # 1. Prepare inputs with resilient SME defaults
+        default_sales = {
             "sku_id": "SKU-001",
             "unit_price": 120.0,
             "sales_lag_1": 65.0,
@@ -149,8 +190,11 @@ async def get_dashboard_summary(
             "month": 6,
             "product_category": "Hardware",
         }
+        user_sales = payload.sales_input if (payload and payload.sales_input) else {}
+        clean_sales = {k: v for k, v in user_sales.items() if not k.startswith("additionalProp")}
+        sales_data = {**default_sales, **clean_sales}
 
-        inv_data = (payload and payload.inventory_input) or {
+        default_inv = {
             "sku_id": "SKU-001",
             "current_stock": 45.0,
             "reorder_level": 80.0,
@@ -160,18 +204,27 @@ async def get_dashboard_summary(
             "inventory_turnover_ratio": 7.8,
             "predicted_sales_demand": 70.0,
         }
+        user_inv = payload.inventory_input if (payload and payload.inventory_input) else {}
+        clean_inv = {k: v for k, v in user_inv.items() if not k.startswith("additionalProp")}
+        inv_data = {**default_inv, **clean_inv}
 
-        fin_data = (payload and payload.finance_data) or {
+        default_fin = {
             "gross_margin_pct": 34.0,
             "quick_ratio": 1.6,
             "expense_to_revenue_ratio": 0.68,
         }
+        user_fin = payload.finance_data if (payload and payload.finance_data) else {}
+        clean_fin = {k: v for k, v in user_fin.items() if not k.startswith("additionalProp")}
+        fin_data = {**default_fin, **clean_fin}
 
-        hr_data = (payload and payload.hr_data) or {
+        default_hr = {
             "productivity_score": 88.0,
             "retention_rate": 93.0,
             "attendance_rate": 95.0,
         }
+        user_hr = payload.hr_data if (payload and payload.hr_data) else {}
+        clean_hr = {k: v for k, v in user_hr.items() if not k.startswith("additionalProp")}
+        hr_data = {**default_hr, **clean_hr}
 
         # 2. Run Hybrid ML Predictions with SHAP
         sales_pred = pred_service.predict_sales_demand(sales_data, include_explanation=True)
@@ -243,7 +296,7 @@ async def get_dashboard_summary(
             "sales_forecast": {
                 "sku_id": sales_pred.get("sku_id"),
                 "predicted_demand": sales_pred.get("predicted_demand"),
-                "model_weights": sales_pred.get("model_weights"),
+                "model_weights": sales_pred.get("ensemble_weights"),
                 "top_positive_driver": top_pos[0] if top_pos else None,
                 "top_negative_driver": top_neg[0] if top_neg else None,
             },
