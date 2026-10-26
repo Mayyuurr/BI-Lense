@@ -1,4 +1,4 @@
-"""Domain Predictions API Router."""
+"""Domain Predictions & Explainability API Router."""
 
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,6 +17,7 @@ class GenericPredictionRequest(BaseModel):
     domain: str = Field(..., description="Target SME domain: sales, inventory, finance, hr")
     features: Dict[str, Any] = Field(..., description="Dictionary of raw feature values")
     target_period: Optional[str] = Field("next_30_days", description="Forecast timeframe")
+    include_explanation: bool = Field(False, description="Whether to include exact linear ensemble SHAP attributions")
 
 
 class SalesPredictionInput(BaseModel):
@@ -33,6 +34,7 @@ class SalesPredictionInput(BaseModel):
     day_of_week: int = Field(2, json_schema_extra={"example": 2})
     month: int = Field(6, json_schema_extra={"example": 6})
     product_category: str = Field("Hardware", json_schema_extra={"example": "Hardware"})
+    include_explanation: bool = Field(False, json_schema_extra={"example": True})
 
 
 class InventoryPredictionInput(BaseModel):
@@ -46,6 +48,14 @@ class InventoryPredictionInput(BaseModel):
     historical_delivery_delay_days: float = Field(..., json_schema_extra={"example": 1.5})
     inventory_turnover_ratio: float = Field(..., json_schema_extra={"example": 8.2})
     predicted_sales_demand: float = Field(..., json_schema_extra={"example": 70.0})
+    include_explanation: bool = Field(False, json_schema_extra={"example": True})
+
+
+class PredictionExplainRequest(BaseModel):
+    """Payload for requesting standalone SHAP explanation."""
+
+    domain: str = Field(..., description="Target SME domain: sales, inventory")
+    features: Dict[str, Any] = Field(..., description="Feature input payload")
 
 
 @router.post("/run", status_code=status.HTTP_200_OK)
@@ -59,6 +69,7 @@ def run_prediction(
         return service.get_domain_prediction(
             domain=payload.domain,
             input_data=payload.features,
+            include_explanation=payload.include_explanation,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -74,7 +85,12 @@ def predict_sales_demand(
     """Direct endpoint for sales demand hybrid ensemble forecasting."""
     try:
         service = PredictionService(db=db)
-        return service.predict_sales_demand(input_data=payload.model_dump())
+        input_data = payload.model_dump()
+        include_explanation = input_data.pop("include_explanation", False)
+        return service.predict_sales_demand(
+            input_data=input_data,
+            include_explanation=include_explanation,
+        )
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
@@ -87,6 +103,29 @@ def predict_inventory_stockout(
     """Direct endpoint for inventory stockout probability estimation."""
     try:
         service = PredictionService(db=db)
-        return service.predict_inventory_stockout(input_data=payload.model_dump())
+        input_data = payload.model_dump()
+        include_explanation = input_data.pop("include_explanation", False)
+        return service.predict_inventory_stockout(
+            input_data=input_data,
+            include_explanation=include_explanation,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+@router.post("/explain", status_code=status.HTTP_200_OK)
+def explain_prediction(
+    payload: PredictionExplainRequest,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Computes exact linear ensemble SHAP attributions and ranked business drivers."""
+    try:
+        service = PredictionService(db=db)
+        return service.explain_domain_prediction(
+            domain=payload.domain,
+            input_data=payload.features,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
